@@ -166,6 +166,25 @@ export const FlareSolverrOptionsSchema = z.object({
   { message: 'url must be set when enabled' },
 );
 
+export const TrawlOptionsSchema = z.object({
+  enabled: z.boolean().default(false),
+  // Base URL of the TRAWL instance, e.g. http://localhost:8191. The client targets
+  // the native /scrape endpoint and appends that path itself when it is missing.
+  url: z.url().optional(),
+  maxTimeout: z.number().default(60000),
+  // TRAWL escalates through four tiers: plain HTTP, cached browser session, fresh
+  // challenge solve, residential proxy. Capping the tier is the only way to keep a
+  // run off the (paid) residential pool. Left unset, TRAWL's own default of 4 applies.
+  maxTier: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
+  // Skip tier 1 (plain HTTP) and go straight to a browser. FlixPatrol answers 403 to
+  // any non-browser client, so tier 1 is a wasted round trip — but that is TRAWL's
+  // call to make, and its tier 1 is cheap, so this stays opt-in rather than defaulted.
+  skipHttp: z.boolean().optional(),
+}).refine(
+  (t) => !t.enabled || (t.url !== undefined && t.url.length > 0),
+  { message: 'url must be set when enabled' },
+);
+
 // Infer types from schemas
 export type FlixPatrolTop10 = z.infer<typeof FlixPatrolTop10Schema>;
 export type FlixPatrolPopular = z.infer<typeof FlixPatrolPopularSchema>;
@@ -178,3 +197,4 @@ export type CacheOptions = z.infer<typeof CacheOptionsSchema>;
 export type NotificationsConfigFromSchema = z.infer<typeof NotificationsSchema>;
 export type ScheduleOptions = z.infer<typeof ScheduleOptionsSchema>;
 export type FlareSolverrOptions = z.infer<typeof FlareSolverrOptionsSchema>;
+export type TrawlOptions = z.infer<typeof TrawlOptionsSchema>;

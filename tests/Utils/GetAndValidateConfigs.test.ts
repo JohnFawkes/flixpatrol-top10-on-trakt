@@ -479,5 +479,97 @@ describe('GetAndValidateConfigs', () => {
         expect(() => GetAndValidateConfigs.getFlareSolverrOptions()).toThrow(ConfigurationError);
       });
     });
+
+    describe('getTrawlOptions', () => {
+      it('returns disabled defaults when the Trawl block is absent', () => {
+        vi.mocked(config.has).mockReturnValue(false);
+        const result = GetAndValidateConfigs.getTrawlOptions();
+        expect(result).toEqual({ enabled: false, maxTimeout: 60000 });
+      });
+
+      it('returns disabled defaults without error when present but disabled', () => {
+        vi.mocked(config.has).mockReturnValue(true);
+        vi.mocked(config.get).mockReturnValue({ enabled: false });
+        const result = GetAndValidateConfigs.getTrawlOptions();
+        expect(result).toEqual({ enabled: false, maxTimeout: 60000 });
+      });
+
+      it('returns a valid enabled configuration', () => {
+        vi.mocked(config.has).mockReturnValue(true);
+        vi.mocked(config.get).mockReturnValue({
+          enabled: true, url: 'http://localhost:8191', maxTimeout: 90000,
+        });
+        const result = GetAndValidateConfigs.getTrawlOptions();
+        expect(result).toEqual({
+          enabled: true, url: 'http://localhost:8191', maxTimeout: 90000,
+        });
+      });
+
+      it('defaults maxTimeout to 60000 when omitted', () => {
+        vi.mocked(config.has).mockReturnValue(true);
+        vi.mocked(config.get).mockReturnValue({ enabled: true, url: 'http://localhost:8191' });
+        expect(GetAndValidateConfigs.getTrawlOptions().maxTimeout).toBe(60000);
+      });
+
+      it('accepts the optional tier controls', () => {
+        vi.mocked(config.has).mockReturnValue(true);
+        vi.mocked(config.get).mockReturnValue({
+          enabled: true, url: 'http://localhost:8191', maxTier: 3, skipHttp: true,
+        });
+        const result = GetAndValidateConfigs.getTrawlOptions();
+        expect(result.maxTier).toBe(3);
+        expect(result.skipHttp).toBe(true);
+      });
+
+      it('throws when maxTier is outside the four tiers TRAWL defines', () => {
+        vi.mocked(config.has).mockReturnValue(true);
+        vi.mocked(config.get).mockReturnValue({
+          enabled: true, url: 'http://localhost:8191', maxTier: 5,
+        });
+        expect(() => GetAndValidateConfigs.getTrawlOptions()).toThrow(ConfigurationError);
+      });
+
+      it('throws when enabled with no url', () => {
+        vi.mocked(config.has).mockReturnValue(true);
+        vi.mocked(config.get).mockReturnValue({ enabled: true });
+        expect(() => GetAndValidateConfigs.getTrawlOptions()).toThrow(ConfigurationError);
+      });
+
+      it('throws when url is not a valid URL', () => {
+        vi.mocked(config.has).mockReturnValue(true);
+        vi.mocked(config.get).mockReturnValue({ enabled: true, url: 'not-a-url' });
+        expect(() => GetAndValidateConfigs.getTrawlOptions()).toThrow(ConfigurationError);
+      });
+    });
+
+    describe('assertSingleScrapingBackend', () => {
+      const flareSolverr = (enabled: boolean) => ({
+        enabled, url: 'http://localhost:8191/v1', maxTimeout: 60000,
+      });
+      const trawl = (enabled: boolean) => ({
+        enabled, url: 'http://localhost:8192', maxTimeout: 60000,
+      });
+
+      it('throws when both backends are enabled', () => {
+        expect(() => GetAndValidateConfigs.assertSingleScrapingBackend(flareSolverr(true), trawl(true)))
+          .toThrow(ConfigurationError);
+      });
+
+      it('names both blocks so the user knows which to turn off', () => {
+        expect(() => GetAndValidateConfigs.assertSingleScrapingBackend(flareSolverr(true), trawl(true)))
+          .toThrow(/FlareSolverr and Trawl/);
+      });
+
+      it.each([
+        ['only FlareSolverr', true, false],
+        ['only Trawl', false, true],
+        ['neither', false, false],
+      ])('accepts %s', (_label, fsEnabled, trawlEnabled) => {
+        expect(() => GetAndValidateConfigs.assertSingleScrapingBackend(
+          flareSolverr(fsEnabled),
+          trawl(trawlEnabled),
+        )).not.toThrow();
+      });
+    });
   });
 });

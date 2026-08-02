@@ -124,5 +124,10 @@
     "enabled": false,
     "url": "http://localhost:8191/v1",
     "maxTimeout": 60000
+  },
+  "Trawl": {
+    "enabled": false,
+    "url": "http://localhost:8191",
+    "maxTimeout": 60000
   }
 }

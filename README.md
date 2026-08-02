@@ -335,6 +335,78 @@ instead of localhost: `"url": "http://flaresolverr:8191/v1"`.
 </details>
 
 <details>
+<summary><strong>Trawl</strong> — Cloudflare challenge bypass, FlareSolverr alternative (optional)</summary>
+
+[TRAWL](https://github.com/germondai/trawl) solves the same problem as FlareSolverr
+— it gets past the Cloudflare managed challenge that makes FlixPatrol answer 403 to
+non-browser clients — using a pool of warm hardened-Firefox instances and a
+four-tier escalation strategy (plain HTTP → cached browser session → fresh challenge
+solve → residential proxy).
+
+`FlareSolverr` and `Trawl` are alternatives, not layers: enable **at most one**.
+Enabling both is rejected at config load with an error naming both blocks.
+
+> **Note**
+> TRAWL also exposes a FlareSolverr-compatible `/v1` endpoint, but pointing the
+> `FlareSolverr` block at it does **not** work. That compatibility layer implements
+> `request.get`/`request.post` only, and this tool drives an explicit browser session
+> (`sessions.create` … `sessions.destroy`) which TRAWL has no commands for — the run
+> would fail on its first call. Use this `Trawl` block instead: it targets TRAWL's
+> native `/scrape` endpoint, and TRAWL manages session reuse internally.
+
+| Name       | Description                                             | Mandatory  | Values           | Default |
+|------------|---------------------------------------------------------|------------|------------------|---------|
+| enabled    | Route FlixPatrol requests through TRAWL                  | No         | true, false      | false   |
+| url        | TRAWL base URL (`/scrape` is appended automatically)     | If enabled | Any valid URL    |         |
+| maxTimeout | Challenge solving timeout in milliseconds                | No         | Number           | 60000   |
+| maxTier    | Highest escalation tier TRAWL may use for a request      | No         | 1, 2, 3, 4       | 4       |
+| skipHttp   | Skip tier 1 (plain HTTP) and go straight to a browser    | No         | true, false      | false   |
+
+`maxTier` is the knob worth knowing about: tier 4 routes through a **residential
+proxy**, which is usually a paid service. Set `"maxTier": 3` to keep runs off it, or
+`2` to allow nothing beyond a cached browser session.
+
+At the start of each run the tool waits for TRAWL's `/health` endpoint to report a
+live browser pool, so a container that is unreachable — or still warming up — fails
+the run immediately instead of midway through. Each response is logged at `debug`
+level with the tier that served it, whether the session was reused, and the elapsed
+time.
+
+Run TRAWL alongside the tool:
+
+```yaml
+# docker-compose.yml
+services:
+  trawl:
+    image: ghcr.io/germondai/trawl:latest   # use :baseline on older CPUs
+    container_name: trawl
+    # Published on loopback only: TRAWL has no authentication and must not
+    # be reachable from the network.
+    ports:
+      - "127.0.0.1:8191:8191"
+    environment:
+      - BROWSER_POOL_SIZE=3
+    restart: unless-stopped
+```
+
+Then:
+
+```json
+{
+  "Trawl": {
+    "enabled": true,
+    "url": "http://localhost:8191",
+    "maxTimeout": 60000
+  }
+}
+```
+
+If the tool itself runs in Docker on the same Compose network, use the service name
+instead of localhost: `"url": "http://trawl:8191"`.
+
+</details>
+
+<details>
 <summary><strong>Example configuration</strong></summary>
 
 ```json
@@ -443,6 +515,11 @@ instead of localhost: `"url": "http://flaresolverr:8191/v1"`.
     "enabled": false,
     "url": "http://localhost:8191/v1",
     "maxTimeout": 60000
+  },
+  "Trawl": {
+    "enabled": false,
+    "url": "http://localhost:8191",
+    "maxTimeout": 60000
   }
 }
 ```
@@ -451,7 +528,7 @@ The `Notifications` block is fully optional — leave the arrays empty (or omit 
 
 The `Schedule` block is fully optional and disabled by default — omit it (or leave `enabled: false`) to keep the classic one-shot behaviour. See [Daemon Mode](#daemon-mode-built-in-scheduling) below.
 
-The `FlareSolverr` block is fully optional and disabled by default — omit it (or leave `enabled: false`) to keep the classic behaviour of talking directly to FlixPatrol.
+The `FlareSolverr` and `Trawl` blocks are fully optional and disabled by default — omit them (or leave `enabled: false`) to keep the classic behaviour of talking directly to FlixPatrol. They are alternative bypasses for the same Cloudflare challenge, so enable at most one; both enabled is a configuration error.
 
 </details>
 
@@ -583,7 +660,10 @@ lives inside the app itself.
 | "Bad matching"          | This is a FlixPatrol/Trakt limitation. Titles are matched by name and year.              |
 | "Authentication failed" | Delete `./config/.trakt` and re-authenticate.                                            |
 | "Permission denied" on config folder (Docker) | The Docker image runs as a non-root user (`flixpatrol`, UID 1000). Fix permissions with: `sudo chown -R 1000:1000 /path/to/config` |
-| "Unable to get FlixPatrol ... page" with `HTTP 403 (cf-mitigated: challenge)` | Cloudflare is challenging the request. Enable the optional `FlareSolverr` block (see Configuration File). |
+| "Unable to get FlixPatrol ... page" with `HTTP 403 (cf-mitigated: challenge)` | Cloudflare is challenging the request. Enable the optional `FlareSolverr` **or** `Trawl` block (see Configuration File). |
+| `sessions.create failed ... Unknown cmd` or `... url must be a non-empty string` | The `FlareSolverr` block is pointed at a TRAWL instance, which has no session commands. Move the configuration to the `Trawl` block. |
+| "FlareSolverr and Trawl are both enabled" | They are alternative backends for the same job. Set `enabled: false` on one of them. |
+| "TRAWL is not ready at ... browser pool still initializing" | TRAWL was still warming up after the readiness retries. Give the container more time to start, or raise `BROWSER_POOL_SIZE` headroom. |
 
 ## Development
 

@@ -12,6 +12,7 @@ import {
   NotificationsSchema,
   ScheduleOptionsSchema,
   FlareSolverrOptionsSchema,
+  TrawlOptionsSchema,
 } from '../types';
 import type {
   FlixPatrolTop10,
@@ -22,6 +23,7 @@ import type {
   CacheOptions,
   ScheduleOptions,
   FlareSolverrOptions,
+  TrawlOptions,
 } from '../types';
 import type { NotificationsConfig } from '../Notifications/types';
 
@@ -153,6 +155,33 @@ export class GetAndValidateConfigs {
     } catch (err) {
       if (err instanceof ConfigurationError) throw err;
       throw new ConfigurationError(`${err}`);
+    }
+  }
+
+  public static getTrawlOptions(): TrawlOptions {
+    try {
+      const data = config.has('Trawl') ? config.get('Trawl') : {};
+      return validateConfig(TrawlOptionsSchema, data, 'Trawl');
+    } catch (err) {
+      if (err instanceof ConfigurationError) throw err;
+      throw new ConfigurationError(`${err}`);
+    }
+  }
+
+  /**
+   * FlareSolverr and TRAWL both replace the direct impit fetch entirely, so only one
+   * can be in effect. Enabling both is a config mistake worth naming rather than
+   * silently resolving by precedence: the user would keep paying for a container
+   * that never serves a request and never learn which one was actually used.
+   */
+  public static assertSingleScrapingBackend(
+    flareSolverr: FlareSolverrOptions,
+    trawl: TrawlOptions,
+  ): void {
+    if (flareSolverr.enabled && trawl.enabled) {
+      throw new ConfigurationError(
+        'FlareSolverr and Trawl are both enabled, but they are alternative scraping backends — enable exactly one',
+      );
     }
   }
 }
