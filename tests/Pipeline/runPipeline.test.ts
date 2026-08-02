@@ -14,7 +14,16 @@ const createSession = vi.fn().mockResolvedValue(undefined);
 const destroySession = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../src/FlareSolverr', () => ({
   FlareSolverrClient: vi.fn().mockImplementation(function FlareSolverrClientMock() {
-    return { createSession, destroySession, get: vi.fn() };
+    return { name: 'FlareSolverr', createSession, destroySession, get: vi.fn() };
+  }),
+}));
+const trawlCreateSession = vi.fn().mockResolvedValue(undefined);
+const trawlDestroySession = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../src/Trawl', () => ({
+  TrawlClient: vi.fn().mockImplementation(function TrawlClientMock() {
+    return {
+      name: 'TRAWL', createSession: trawlCreateSession, destroySession: trawlDestroySession, get: vi.fn(),
+    };
   }),
 }));
 vi.mock('../../src/Utils', async (importOriginal) => {
@@ -129,5 +138,55 @@ describe('runPipeline FlareSolverr lifecycle', () => {
     }))).rejects.toThrow('scrape exploded');
 
     expect(destroySession).toHaveBeenCalledOnce();
+  });
+});
+
+describe('runPipeline scraping backend selection', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('uses TRAWL when the Trawl block is enabled', async () => {
+    await runPipeline(baseDeps({
+      trawlOptions: { enabled: true, url: 'http://localhost:8191', maxTimeout: 60000 },
+    }));
+
+    expect(trawlCreateSession).toHaveBeenCalledOnce();
+    expect(trawlDestroySession).toHaveBeenCalledOnce();
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it('leaves TRAWL alone when the Trawl block is disabled', async () => {
+    await runPipeline(baseDeps({
+      trawlOptions: { enabled: false, maxTimeout: 60000 },
+    }));
+
+    expect(trawlCreateSession).not.toHaveBeenCalled();
+  });
+
+  it('runs TRAWL rather than FlareSolverr if a config somehow enables both', async () => {
+    // Config validation rejects this pairing before the pipeline ever sees it
+    // (assertSingleScrapingBackend); this pins the tiebreak for direct callers.
+    await runPipeline(baseDeps({
+      flareSolverrOptions: { enabled: true, url: 'http://localhost:8191/v1', maxTimeout: 60000 },
+      trawlOptions: { enabled: true, url: 'http://localhost:8192', maxTimeout: 60000 },
+    }));
+
+    expect(trawlCreateSession).toHaveBeenCalledOnce();
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it('destroys the TRAWL session even when the run throws', async () => {
+    getTop10Sections.mockRejectedValueOnce(new Error('scrape exploded'));
+
+    await expect(runPipeline(baseDeps({
+      trawlOptions: { enabled: true, url: 'http://localhost:8191', maxTimeout: 60000 },
+      flixPatrolTop10: [{
+        platform: 'netflix', location: 'world', fallback: false,
+        privacy: 'private', limit: 10, type: 'both',
+      }],
+    }))).rejects.toThrow('scrape exploded');
+
+    expect(trawlDestroySession).toHaveBeenCalledOnce();
   });
 });

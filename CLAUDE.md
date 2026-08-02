@@ -43,6 +43,9 @@ src/
 ├── FlareSolverr/
 │   ├── index.ts                # Exports FlareSolverrClient
 │   └── FlareSolverrClient.ts   # FlareSolverr v1 protocol client (sessions + request.get)
+├── Trawl/
+│   ├── index.ts                # Exports TrawlClient
+│   └── TrawlClient.ts          # TRAWL native /scrape client (+ /health readiness probe)
 ├── Trakt/
 │   ├── index.ts                # Exports TraktAPI class and types
 │   └── TraktAPI.ts             # Trakt.tv API wrapper
@@ -63,6 +66,7 @@ src/
 │   ├── index.ts                # Barrel for all types
 │   ├── Config.types.ts         # Zod schemas + inferred config types
 │   ├── FlixPatrol.types.ts     # Platform/location/type unions
+│   ├── Scraper.types.ts        # ScrapeClient interface (FlareSolverr / TRAWL contract)
 │   └── Trakt.types.ts          # Trakt id types
 └── Utils/
     ├── index.ts                # Exports logger, Utils, errors, package info
@@ -85,12 +89,12 @@ src/
 5. Every exit path flushes pending notification dispatches before `process.exit`, so fire-and-forget notifications are not cut off.
 
 **`src/Pipeline/runPipeline.ts`** - One run:
-1. Creates the FlareSolverr session, if enabled (before any list, so a dead container fails fast)
+1. Creates the scraping backend session, if one is enabled (before any list, so a dead container fails fast)
 2. Initializes `FlixPatrol` and `TraktAPI` instances
 3. Calls `trakt.connect()` (OAuth device flow)
 4. Dispatches `run_start`, then processes Top10 → Popular → MostWatched → MostHours sequentially (for each: scrape FlixPatrol → convert to Trakt IDs → sync list)
 5. Dispatches `run_end` with a summary (lists processed, movies/shows added, duration)
-6. Destroys the FlareSolverr session in a `finally` block, so it also covers the early abort paths and thrown errors
+6. Destroys the scraping backend session in a `finally` block, so it also covers the early abort paths and thrown errors
 
 Between lists, an abort checkpoint honours `SIGTERM`/`SIGINT` — it stops only after the current Trakt write, never mid-write.
 
@@ -104,9 +108,13 @@ Between lists, an abort checkpoint honours `SIGTERM`/`SIGINT` — it stops only 
 - Adapters: webhook, gotify, ntfy, apprise
 - No-throw contract: a failing destination logs a warning and never breaks a run. Logs carry only the destination host, never the full URL, which would leak webhook secrets
 
+**Scraping backends** - FlareSolverr and TRAWL are alternative Cloudflare bypasses behind one `ScrapeClient` interface (`createSession` / `get` / `destroySession`), so `FlixPatrol` and `runPipeline` never branch on which is in use. Enabling both is a `ConfigurationError` (`GetAndValidateConfigs.assertSingleScrapingBackend`).
+- **FlareSolverr**: session commands are driven explicitly (`sessions.create` → N × `request.get` → `sessions.destroy`); without a session every request re-solves the challenge (~15s vs ~1-3s warm)
+- **TRAWL**: targets the native `/scrape` endpoint, not the FlareSolverr-compatible `/v1` — that compat layer implements `request.get`/`request.post` only and rejects a `sessions.create` outright, so the shared `FlareSolverr` block cannot drive it. TRAWL caches sessions internally, so `createSession` is a `/health` readiness probe and `destroySession` is a no-op. A `FlareSolverr` block pointed at TRAWL fails with a message naming the `Trawl` block
+
 **`src/Flixpatrol/FlixPatrol.ts`** - Web scraping:
 - Platform/location constants defined as const arrays (type guards derive from these)
-- Uses `impit` (Chrome impersonation) for direct HTTP requests, or an optional FlareSolverr client when configured
+- Uses `impit` (Chrome impersonation) for direct HTTP requests, or an optional `ScrapeClient` (FlareSolverr / TRAWL) when configured
 - HTML parsing via JSDOM with XPath expressions
 - File-system caching with `file-system-cache` (SHA1 keys, TTL-based, separate caches for movies/TV shows)
 
@@ -118,7 +126,8 @@ Between lists, an abort checkpoint honours `SIGTERM`/`SIGINT` — it stops only 
 **`src/Utils/GetAndValidateConfigs.ts`** - Configuration validation:
 - Zod schemas validate every config block at load time
 - Throws `ConfigurationError` on invalid config; `app.ts` catches it, dispatches an `error` notification, then exits 1
-- Optional blocks (`FlixPatrolMostHours`, `Notifications`, `Schedule`, `FlareSolverr`) are read through `config.has()` and fall back to their defaults, so an absent block is never an error
+- Optional blocks (`FlixPatrolMostHours`, `Notifications`, `Schedule`, `FlareSolverr`, `Trawl`) are read through `config.has()` and fall back to their defaults, so an absent block is never an error
+- `assertSingleScrapingBackend()` enforces the one cross-block rule: `FlareSolverr` and `Trawl` cannot both be enabled
 
 ### Key Types
 
@@ -213,6 +222,13 @@ File: `config/default.json`
     enabled: boolean,  // default: false
     url?: string,  // mandatory when enabled, e.g. http://localhost:8191/v1
     maxTimeout: number  // default: 60000
+  },
+  Trawl: {  // optional block: absent means disabled; mutually exclusive with FlareSolverr
+    enabled: boolean,  // default: false
+    url?: string,  // mandatory when enabled, e.g. http://localhost:8191 ('/scrape' is appended)
+    maxTimeout: number,  // default: 60000
+    maxTier?: 1 | 2 | 3 | 4,  // cap escalation; tier 4 uses a (paid) residential proxy
+    skipHttp?: boolean  // skip tier 1 (plain HTTP) and go straight to a browser
   }
 }
 ```
@@ -242,7 +258,7 @@ Detail page (title/year extraction):
 
 ### Error Handling
 
-Errors derive from `AppError` (`src/Utils/Errors.ts`): `ConfigurationError`, `FlixPatrolError`, `TraktError`, `FlareSolverrError`.
+Errors derive from `AppError` (`src/Utils/Errors.ts`): `ConfigurationError`, `FlixPatrolError`, `TraktError`, `FlareSolverrError`, `TrawlError`.
 
 - **Configuration errors**: throw `ConfigurationError`, caught in `app.ts` → `error` notification → exit 1
 - **Scraping failures**: `getFlixPatrolHTMLPage` returns `null` (never throws); callers turn that into `FlixPatrolError`, which fails the run

@@ -153,6 +153,11 @@ export class Utils {
           url: 'http://localhost:8191/v1',
           maxTimeout: 60000,
         },
+        Trawl: {
+          enabled: false,
+          url: 'http://localhost:8191',
+          maxTimeout: 60000,
+        },
       };
 
       fs.writeFileSync('./config/default.json', JSON.stringify(defaultConfig, null, 2) + '\n');

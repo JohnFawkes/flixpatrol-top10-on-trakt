@@ -98,6 +98,9 @@ async function bootstrapConfigs(): Promise<{
 }> {
   try {
     logger.info('Loading all configurations values');
+    const flareSolverrOptions = GetAndValidateConfigs.getFlareSolverrOptions();
+    const trawlOptions = GetAndValidateConfigs.getTrawlOptions();
+    GetAndValidateConfigs.assertSingleScrapingBackend(flareSolverrOptions, trawlOptions);
     const deps: Omit<RunPipelineDeps, 'signal'> = {
       cacheOptions: GetAndValidateConfigs.getCacheOptions(),
       traktOptions: GetAndValidateConfigs.getTraktOptions(),
@@ -105,7 +108,8 @@ async function bootstrapConfigs(): Promise<{
       flixPatrolPopulars: GetAndValidateConfigs.getFlixPatrolPopular(),
       flixPatrolMostWatched: GetAndValidateConfigs.getFlixPatrolMostWatched(),
       flixPatrolMostHours: GetAndValidateConfigs.getFlixPatrolMostHours(),
-      flareSolverrOptions: GetAndValidateConfigs.getFlareSolverrOptions(),
+      flareSolverrOptions,
+      trawlOptions,
       dispatch,
       dryRun,
       listNamePrefix,

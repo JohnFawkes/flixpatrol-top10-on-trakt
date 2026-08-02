@@ -48,3 +48,13 @@ export class FlareSolverrError extends AppError {
     this.name = 'FlareSolverrError';
   }
 }
+
+/**
+ * Error thrown when the TRAWL scraping backend is unreachable or not ready
+ */
+export class TrawlError extends AppError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TrawlError';
+  }
+}

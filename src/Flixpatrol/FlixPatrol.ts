@@ -4,8 +4,8 @@ import { Impit } from 'impit';
 import { logger, FlixPatrolError } from '../Utils';
 import type { TraktTVId, TraktTVIds } from '../types';
 import { TraktAPI } from '../Trakt';
-import type { FlareSolverrClient } from '../FlareSolverr';
 import type {
+  ScrapeClient,
   FlixPatrolMostWatched,
   FlixPatrolMostHours,
   FlixPatrolMostHoursLanguage,
@@ -40,17 +40,17 @@ export class FlixPatrol {
 
   private readonly impit: Impit;
 
-  private readonly flareSolverr?: FlareSolverrClient;
+  private readonly scraper?: ScrapeClient;
 
   constructor(
     cacheOptions: CacheOptions,
     options: FlixPatrolOptions = {},
-    flareSolverr?: FlareSolverrClient,
+    scraper?: ScrapeClient,
   ) {
     this.options.url = options.url || 'https://flixpatrol.com';
     // Use Impit with Chrome browser impersonation to bypass Cloudflare's TLS fingerprint check.
     this.impit = new Impit({ browser: 'chrome', timeout: 30000 });
-    this.flareSolverr = flareSolverr;
+    this.scraper = scraper;
     if (cacheOptions.enabled) {
       this.tvCache = Cache({
         basePath: `${cacheOptions.savePath}/tv-shows`, // (optional) Path where cache files are stored (default).
@@ -88,14 +88,15 @@ export class FlixPatrol {
     const url = `${this.options.url}${path}`;
     logger.silly(`Accessing URL: ${url}`);
 
-    // When FlareSolverr is configured, every request goes through it. We do not try
-    // impit first: FlixPatrol currently answers 403 (cf-mitigated: challenge) to
-    // any non-browser client, and making the bypass conditional on that exact
-    // header would silently stop working if Cloudflare changed the signal.
-    // No retry loop here — FlareSolverr retries internally, and wrapping a 12s
+    // When a scraping backend (FlareSolverr or TRAWL) is configured, every request
+    // goes through it. We do not try impit first: FlixPatrol currently answers 403
+    // (cf-mitigated: challenge) to any non-browser client, and making the bypass
+    // conditional on that exact header would silently stop working if Cloudflare
+    // changed the signal.
+    // No retry loop here — both backends retry internally, and wrapping a 12s
     // challenge solve in a 3x exponential backoff produces pathological runtimes.
-    if (this.flareSolverr) {
-      return this.flareSolverr.get(url);
+    if (this.scraper) {
+      return this.scraper.get(url);
     }
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {

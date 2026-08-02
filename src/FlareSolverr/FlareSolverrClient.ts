@@ -1,6 +1,6 @@
 import { logger } from '../Utils/Logger';
 import { FlareSolverrError } from '../Utils/Errors';
-import type { FlareSolverrOptions } from '../types';
+import type { FlareSolverrOptions, ScrapeClient } from '../types';
 
 /**
  * Fixed, namespaced session id. FlareSolverr instances are commonly shared with
@@ -12,6 +12,23 @@ const SESSION_NAME = 'flixpatrol-top10';
 // same attempt budget, same exponential backoff shape (1s, 2s, 4s).
 const RETRY_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 const MAX_RETRIES = 3;
+
+/**
+ * TRAWL advertises FlareSolverr compatibility, so pointing this block at it is an
+ * easy mistake — but its compatibility layer covers `request.get`/`request.post`
+ * only. A `sessions.create` fails its request validator for carrying no `url`, and
+ * an unknown command is rejected by name. Either way the run dies here, on the very
+ * first call, with a message that reads like a broken FlareSolverr. Name the real
+ * cause instead of leaving the user to find it.
+ */
+const TRAWL_MISCONFIG_HINT = 'this endpoint answered like TRAWL rather than FlareSolverr, and TRAWL has no session commands — configure it under the "Trawl" block instead of "FlareSolverr"';
+const TRAWL_SIGNATURES = [/unknown cmd/i, /url must be a non-empty string/i];
+
+function withTrawlHint(reason: string): string {
+  return TRAWL_SIGNATURES.some((signature) => signature.test(reason))
+    ? `${reason} — ${TRAWL_MISCONFIG_HINT}`
+    : reason;
+}
 
 interface FlareSolverrSolution {
   url: string;
@@ -40,7 +57,9 @@ interface FlareSolverrEnvelope {
  * just ~10x slower, which is why the tests assert the session id is present in
  * every request.get payload.
  */
-export class FlareSolverrClient {
+export class FlareSolverrClient implements ScrapeClient {
+  public readonly name = 'FlareSolverr';
+
   private readonly endpoint: string;
 
   private readonly maxTimeout: number;
@@ -100,7 +119,7 @@ export class FlareSolverrClient {
     }
     if (envelope.status !== 'ok') {
       throw new FlareSolverrError(
-        `sessions.create failed at ${this.endpoint}: ${envelope.message ?? envelope.status}`,
+        `sessions.create failed at ${this.endpoint}: ${withTrawlHint(envelope.message ?? envelope.status)}`,
       );
     }
     this.sessionId = envelope.session ?? SESSION_NAME;

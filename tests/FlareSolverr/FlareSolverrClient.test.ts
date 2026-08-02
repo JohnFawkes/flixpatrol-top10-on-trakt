@@ -72,6 +72,24 @@ describe('FlareSolverrClient', () => {
       await expect(client.createSession()).rejects.toThrow(/boom/);
     });
 
+    it.each([
+      ['an unknown command', 'Unknown cmd: sessions.create'],
+      ['a rejected session payload', 'url must be a non-empty string'],
+    ])('points at the Trawl config block when the endpoint answers with %s', async (_label, message) => {
+      // TRAWL's /v1 covers request.get/request.post only. Both of its rejections for a
+      // sessions.create surface here, and read like a broken FlareSolverr unless the
+      // real cause is named.
+      fetchMock.mockResolvedValue(jsonResponse({ status: 'error', message }));
+
+      await expect(client.createSession()).rejects.toThrow(/"Trawl" block/);
+    });
+
+    it('does not mention Trawl for an ordinary FlareSolverr failure', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ status: 'error', message: 'Session already exists' }));
+
+      await expect(client.createSession()).rejects.not.toThrow(/Trawl/);
+    });
+
     it('includes the underlying fetch failure cause in the thrown message', async () => {
       // Node's fetch collapses every transport failure into "TypeError: fetch failed"
       // and puts the actionable reason in .cause. Without surfacing it, a dead

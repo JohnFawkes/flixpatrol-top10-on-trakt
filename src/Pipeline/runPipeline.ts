@@ -1,13 +1,14 @@
 import { FlixPatrol } from '../Flixpatrol';
 import { TraktAPI } from '../Trakt';
 import { FlareSolverrClient } from '../FlareSolverr';
+import { TrawlClient } from '../Trawl';
 import { logger, Utils } from '../Utils';
 import type {
   NotificationEvent, NotificationPayload, RunSummary,
 } from '../Notifications';
 import type {
   CacheOptions, FlareSolverrOptions, FlixPatrolMostWatched, FlixPatrolMostHours,
-  FlixPatrolPopular, FlixPatrolTop10, TraktAPIOptions,
+  FlixPatrolPopular, FlixPatrolTop10, ScrapeClient, TraktAPIOptions, TrawlOptions,
 } from '../types';
 
 export interface RunPipelineDeps {
@@ -18,6 +19,7 @@ export interface RunPipelineDeps {
   flixPatrolMostWatched: FlixPatrolMostWatched[];
   flixPatrolMostHours: FlixPatrolMostHours[];
   flareSolverrOptions?: FlareSolverrOptions;
+  trawlOptions?: TrawlOptions;
   dispatch: (event: NotificationEvent, payload: NotificationPayload) => Promise<void>;
   dryRun: boolean;
   listNamePrefix: string;
@@ -27,31 +29,49 @@ export interface RunPipelineDeps {
 }
 
 /**
- * Owns the FlareSolverr session lifetime, which is exactly one run.
+ * Selects the scraping backend for this run, or none at all.
+ *
+ * The two are mutually exclusive and config validation rejects enabling both, so
+ * the order here is only a tiebreak for a config that skipped validation (a direct
+ * runPipeline caller, i.e. the tests).
+ */
+function createScrapeClient(deps: RunPipelineDeps): ScrapeClient | undefined {
+  if (deps.trawlOptions?.enabled) {
+    return new TrawlClient(deps.trawlOptions);
+  }
+  if (deps.flareSolverrOptions?.enabled) {
+    return new FlareSolverrClient(deps.flareSolverrOptions);
+  }
+  return undefined;
+}
+
+/**
+ * Owns the scraping backend's session lifetime, which is exactly one run.
  *
  * createSession() runs before any list is processed so an unreachable container
  * fails the run immediately instead of midway through. destroySession() runs in a
  * finally — including on the early `return summary` abort paths — because a leaked
- * session keeps a Chrome resident in the container between runs in daemon mode.
+ * FlareSolverr session keeps a Chrome resident in the container between runs in
+ * daemon mode. TRAWL manages its own sessions, so for it both calls are cheap: a
+ * readiness probe and a no-op.
  */
 export async function runPipeline(deps: RunPipelineDeps): Promise<RunSummary> {
-  const flareSolverr = deps.flareSolverrOptions?.enabled
-    ? new FlareSolverrClient(deps.flareSolverrOptions)
-    : undefined;
+  const scraper = createScrapeClient(deps);
 
-  if (flareSolverr) {
-    await flareSolverr.createSession();
+  if (scraper) {
+    logger.debug(`Routing FlixPatrol requests through ${scraper.name}`);
+    await scraper.createSession();
   }
   try {
-    return await executeRun(deps, flareSolverr);
+    return await executeRun(deps, scraper);
   } finally {
-    if (flareSolverr) {
-      await flareSolverr.destroySession();
+    if (scraper) {
+      await scraper.destroySession();
     }
   }
 }
 
-async function executeRun(deps: RunPipelineDeps, flareSolverr?: FlareSolverrClient): Promise<RunSummary> {
+async function executeRun(deps: RunPipelineDeps, scraper?: ScrapeClient): Promise<RunSummary> {
   const dryRunTag = deps.dryRun ? '[DRY-RUN] ' : '';
 
   const abortedBeforeWrite = async (): Promise<boolean> => {
@@ -79,7 +99,7 @@ async function executeRun(deps: RunPipelineDeps, flareSolverr?: FlareSolverrClie
   logger.silly(`flixPatrolMostWatched: ${JSON.stringify(deps.flixPatrolMostWatched)}`);
   logger.silly(`flixPatrolMostHours: ${JSON.stringify(deps.flixPatrolMostHours)}`);
 
-  const flixpatrol = new FlixPatrol(deps.cacheOptions, {}, flareSolverr);
+  const flixpatrol = new FlixPatrol(deps.cacheOptions, {}, scraper);
   const trakt = new TraktAPI({ ...deps.traktOptions, dryRun: deps.dryRun });
 
   const totalLists = deps.flixPatrolTop10.length
